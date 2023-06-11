@@ -6,6 +6,7 @@ This source code is licensed under the license found in the
 LICENSE file in the root directory of this source tree.
 """
 
+import random
 from tempfile import NamedTemporaryFile
 import argparse
 import torch
@@ -23,7 +24,7 @@ def load_model(version):
     return MusicGen.get_pretrained(version)
 
 
-def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, overlap=5, progress=gr.Progress()):
+def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap=5, progress=gr.Progress()):
     global MODEL
     topk = int(topk)
     if MODEL is None or MODEL.name != model:
@@ -35,7 +36,9 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, ov
     output = None
     total_samples = duration * 50 + 3
     segment_duration = duration
-
+    if seed < 0:
+        seed = random.randint(0, 0xffff_ffff_ffff)
+    torch.manual_seed(seed)
     while duration > 0:
         if output is None: # first pass of long or short song
             if segment_duration > MODEL.lm.cfg.dataset.segment_duration: 
@@ -95,7 +98,7 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, ov
             file.name, output, MODEL.sample_rate, strategy="loudness",
             loudness_headroom_db=16, loudness_compressor=True, add_suffix=False)
         waveform_video = gr.make_waveform(file.name)
-    return waveform_video
+    return waveform_video, seed
 
 
 def ui(**kwargs):
@@ -133,9 +136,16 @@ def ui(**kwargs):
                     topp = gr.Number(label="Top-p", value=0, interactive=True)
                     temperature = gr.Number(label="Temperature", value=1.0, interactive=True)
                     cfg_coef = gr.Number(label="Classifier Free Guidance", value=3.0, interactive=True)
-            with gr.Column():
+                with gr.Row():
+                    seed = gr.Number(label="Seed", value=-1, precision=0, interactive=True)
+                    gr.Button('\U0001f3b2\ufe0f').style(full_width=False).click(fn=lambda: -1, outputs=[seed], queue=False)
+                    reuse_seed = gr.Button('\u267b\ufe0f').style(full_width=False)
+            with gr.Column() as c:
                 output = gr.Video(label="Generated Music")
-        submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, overlap], outputs=[output])
+                seed_used = gr.Number(label='Seed used', value=-1, interactive=False)
+
+        reuse_seed.click(fn=lambda x: x, inputs=[seed_used], outputs=[seed], queue=False)
+        submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap], outputs=[output, seed_used])
         gr.Examples(
             fn=predict,
             examples=[
