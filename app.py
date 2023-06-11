@@ -17,7 +17,12 @@ from audiocraft.data.audio import audio_write
 
 MODEL = None
 IS_SHARED_SPACE = "musicgen/MusicGen" in os.environ.get('SPACE_ID', '')
+INTERRUPTED = False
 
+def interrupt():
+    global INTERRUPTED
+    INTERRUPTED = True
+    print('Interrupted!')
 
 def load_model(version):
     print("Loading model", version)
@@ -26,6 +31,8 @@ def load_model(version):
 
 def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap=5, progress=gr.Progress()):
     global MODEL
+    global INTERRUPTED
+    INTERRUPTED = False
     topk = int(topk)
     if MODEL is None or MODEL.name != model:
         MODEL = load_model(model)
@@ -40,6 +47,9 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
         seed = random.randint(0, 0xffff_ffff_ffff)
     torch.manual_seed(seed)
     while duration > 0:
+        if INTERRUPTED:
+            break
+
         if output is None: # first pass of long or short song
             if segment_duration > MODEL.lm.cfg.dataset.segment_duration: 
                 segment_duration = MODEL.lm.cfg.dataset.segment_duration
@@ -124,7 +134,8 @@ def ui(**kwargs):
                     text = gr.Text(label="Input Text", interactive=True)
                     melody = gr.Audio(source="upload", type="numpy", label="Melody Condition (optional)", interactive=True)
                 with gr.Row():
-                    submit = gr.Button("Submit")
+                    submit = gr.Button("Generate", variant="primary")
+                    gr.Button("Interrupt").click(fn=interrupt, queue=False)
                 with gr.Row():
                     model = gr.Radio(["melody", "medium", "small", "large"], label="Model", value="melody", interactive=True)
                 with gr.Row():
@@ -220,7 +231,7 @@ def ui(**kwargs):
         if share:
             launch_kwargs['share'] = share
 
-        interface.queue().launch(**launch_kwargs, max_threads=1)
+        interface.queue().launch(**launch_kwargs)
 
 
 if __name__ == "__main__":
