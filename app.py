@@ -125,7 +125,7 @@ def ui(**kwargs):
                 with gr.Row():
                     model = gr.Radio(["melody", "medium", "small", "large"], label="Model", value="melody", interactive=True)
                 with gr.Row():
-                    duration = gr.Slider(minimum=1, maximum=3600, value=10, step=1, label="Duration", interactive=True)
+                    duration = gr.Slider(minimum=1, maximum=300, value=10, step=1, label="Duration", interactive=True)
                 with gr.Row():
                     overlap = gr.Slider(minimum=1, maximum=29, value=5, step=1, label="Overlap", interactive=True)
                 with gr.Row():
