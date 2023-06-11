@@ -68,6 +68,7 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, ov
                 melody_sample_rate=sr,
                 progress=False
             )
+            duration -= segment_duration
         else:
             if output is None:
                 next_segment = MODEL.generate(descriptions=[text], 
