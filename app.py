@@ -29,7 +29,7 @@ def load_model(version):
     return MusicGen.get_pretrained(version)
 
 
-def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap=5, progress=gr.Progress()):
+def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap=5, recondition=True, progress=gr.Progress()):
     global MODEL
     global INTERRUPTED
     INTERRUPTED = False
@@ -93,7 +93,11 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
                 duration -= segment_duration
             else:
                 last_chunk = output[:, :, -overlap*MODEL.sample_rate:]
-                next_segment = MODEL.generate_continuation(last_chunk, MODEL.sample_rate, descriptions=[text], progress=updateProgress)
+                next_segment = MODEL.generate_continuation(last_chunk,
+                    MODEL.sample_rate, descriptions=[text],
+                progress=updateProgress, melody_wavs=(output[:, :, 
+                    :MODEL.lm.cfg.dataset.segment_duration*MODEL.sample_rate]
+                if MODEL.name == "melody" and recondition else None), resample=False)
                 duration -= segment_duration - overlap
         
         if output is None:
@@ -142,6 +146,7 @@ def ui(**kwargs):
                     duration = gr.Slider(minimum=1, maximum=300, value=10, step=1, label="Duration", interactive=True)
                 with gr.Row():
                     overlap = gr.Slider(minimum=1, maximum=29, value=5, step=1, label="Overlap", interactive=True)
+                    recondition = gr.Checkbox(True, label='Condition next chunks with the first chunk')
                 with gr.Row():
                     topk = gr.Number(label="Top-k", value=250, interactive=True)
                     topp = gr.Number(label="Top-p", value=0, interactive=True)
@@ -156,7 +161,11 @@ def ui(**kwargs):
                 seed_used = gr.Number(label='Seed used', value=-1, interactive=False)
 
         reuse_seed.click(fn=lambda x: x, inputs=[seed_used], outputs=[seed], queue=False)
-        submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap], outputs=[output, seed_used])
+        submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap, recondition], outputs=[output, seed_used])
+        def update_recondition(name: str):
+            enabled = name == 'melody'
+            return recondition.update(interactive=enabled, value=enabled)
+        model.change(fn=update_recondition, inputs=[model], outputs=[recondition])
         gr.Examples(
             fn=predict,
             examples=[
