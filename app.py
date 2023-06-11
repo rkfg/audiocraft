@@ -23,37 +23,66 @@ def load_model(version):
     return MusicGen.get_pretrained(version)
 
 
-def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef):
+def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, overlap=5):
     global MODEL
     topk = int(topk)
     if MODEL is None or MODEL.name != model:
         MODEL = load_model(model)
 
-    if duration > MODEL.lm.cfg.dataset.segment_duration:
-        raise gr.Error("MusicGen currently supports durations of up to 30 seconds!")
-    MODEL.set_generation_params(
-        use_sampling=True,
-        top_k=topk,
-        top_p=topp,
-        temperature=temperature,
-        cfg_coef=cfg_coef,
-        duration=duration,
-    )
-
-    if melody:
-        sr, melody = melody[0], torch.from_numpy(melody[1]).to(MODEL.device).float().t().unsqueeze(0)
-        print(melody.shape)
-        if melody.dim() == 2:
-            melody = melody[None]
-        melody = melody[..., :int(sr * MODEL.lm.cfg.dataset.segment_duration)]
-        output = MODEL.generate_with_chroma(
-            descriptions=[text],
-            melody_wavs=melody,
-            melody_sample_rate=sr,
-            progress=False
+    if duration > MODEL.lm.cfg.dataset.segment_duration and melody is not None:
+        raise gr.Error("Generating music longer than 30 seconds with melody conditioning is not yet supported!")
+    
+    output = None
+    segment_duration = duration
+    while duration > 0:
+        if output is None: # first pass of long or short song
+            if segment_duration > MODEL.lm.cfg.dataset.segment_duration: 
+                segment_duration = MODEL.lm.cfg.dataset.segment_duration
+            else:
+                segment_duration = duration
+        else: # next pass of long song
+            if duration + overlap < MODEL.lm.cfg.dataset.segment_duration:
+                segment_duration = duration + overlap
+            else:
+                segment_duration = MODEL.lm.cfg.dataset.segment_duration
+        
+        print(f'Segment duration: {segment_duration}, duration: {duration}, overlap: {overlap}')
+        MODEL.set_generation_params(
+            use_sampling=True,
+            top_k=topk,
+            top_p=topp,
+            temperature=temperature,
+            cfg_coef=cfg_coef,
+            duration=segment_duration,
         )
-    else:
-        output = MODEL.generate(descriptions=[text], progress=False)
+
+        if melody:
+            sr, melody = melody[0], torch.from_numpy(melody[1]).to(MODEL.device).float().t().unsqueeze(0)
+            print(melody.shape)
+            if melody.dim() == 2:
+                melody = melody[None]
+            melody = melody[..., :int(sr * MODEL.lm.cfg.dataset.segment_duration)]
+            next_segment = MODEL.generate_with_chroma(
+                descriptions=[text],
+                melody_wavs=melody,
+                melody_sample_rate=sr,
+                progress=False
+            )
+        else:
+            if output is None:
+                next_segment = MODEL.generate(descriptions=[text], 
+                                              progress=False)
+                duration -= segment_duration
+            else:
+                last_chunk = output[:, :, -overlap*MODEL.sample_rate:]
+                next_segment = MODEL.generate_continuation(last_chunk, MODEL.sample_rate, descriptions=[text], progress=False)
+                duration -= segment_duration - overlap
+        
+        if output is None:
+            output = next_segment
+        else:
+            output = torch.cat([output[:, :, :-overlap*MODEL.sample_rate], next_segment], 2)
+        
 
     output = output.detach().cpu().float()[0]
     with NamedTemporaryFile("wb", suffix=".wav", delete=False) as file:
@@ -91,7 +120,9 @@ def ui(**kwargs):
                 with gr.Row():
                     model = gr.Radio(["melody", "medium", "small", "large"], label="Model", value="melody", interactive=True)
                 with gr.Row():
-                    duration = gr.Slider(minimum=1, maximum=30, value=10, label="Duration", interactive=True)
+                    duration = gr.Slider(minimum=1, maximum=3600, value=10, step=1, label="Duration", interactive=True)
+                with gr.Row():
+                    overlap = gr.Slider(minimum=1, maximum=29, value=5, step=1, label="Overlap", interactive=True)
                 with gr.Row():
                     topk = gr.Number(label="Top-k", value=250, interactive=True)
                     topp = gr.Number(label="Top-p", value=0, interactive=True)
@@ -99,7 +130,7 @@ def ui(**kwargs):
                     cfg_coef = gr.Number(label="Classifier Free Guidance", value=3.0, interactive=True)
             with gr.Column():
                 output = gr.Video(label="Generated Music")
-        submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef], outputs=[output])
+        submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, overlap], outputs=[output])
         gr.Examples(
             fn=predict,
             examples=[
