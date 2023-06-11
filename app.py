@@ -41,6 +41,7 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
         raise gr.Error("Generating music longer than 30 seconds with melody conditioning is not yet supported!")
     
     output = None
+    first_chunk = None
     total_samples = duration * 50 + 3
     segment_duration = duration
     if seed < 0:
@@ -92,12 +93,13 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
                                               progress=updateProgress)
                 duration -= segment_duration
             else:
+                if first_chunk is None and MODEL.name == "melody" and recondition:
+                    first_chunk = output[:, :, 
+                    :MODEL.lm.cfg.dataset.segment_duration*MODEL.sample_rate]
                 last_chunk = output[:, :, -overlap*MODEL.sample_rate:]
                 next_segment = MODEL.generate_continuation(last_chunk,
                     MODEL.sample_rate, descriptions=[text],
-                progress=updateProgress, melody_wavs=(output[:, :, 
-                    :MODEL.lm.cfg.dataset.segment_duration*MODEL.sample_rate]
-                if MODEL.name == "melody" and recondition else None), resample=False)
+                progress=updateProgress, melody_wavs=(first_chunk), resample=False)
                 duration -= segment_duration - overlap
         
         if output is None:
@@ -146,7 +148,7 @@ def ui(**kwargs):
                     duration = gr.Slider(minimum=1, maximum=300, value=10, step=1, label="Duration", interactive=True)
                 with gr.Row():
                     overlap = gr.Slider(minimum=1, maximum=29, value=5, step=1, label="Overlap", interactive=True)
-                    recondition = gr.Checkbox(True, label='Condition next chunks with the first chunk')
+                    recondition = gr.Checkbox(False, label='Condition next chunks with the first chunk')
                 with gr.Row():
                     topk = gr.Number(label="Top-k", value=250, interactive=True)
                     topp = gr.Number(label="Top-p", value=0, interactive=True)
@@ -164,7 +166,7 @@ def ui(**kwargs):
         submit.click(predict, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap, recondition], outputs=[output, seed_used])
         def update_recondition(name: str):
             enabled = name == 'melody'
-            return recondition.update(interactive=enabled, value=enabled)
+            return recondition.update(interactive=enabled, value=None if enabled else False)
         model.change(fn=update_recondition, inputs=[model], outputs=[recondition])
         gr.Examples(
             fn=predict,
