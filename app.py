@@ -19,6 +19,7 @@ from audiocraft.data.audio import audio_write
 MODEL = None
 IS_SHARED_SPACE = "musicgen/MusicGen" in os.environ.get('SPACE_ID', '')
 INTERRUPTED = False
+UNLOAD_MODEL = False
 
 def interrupt():
     global INTERRUPTED
@@ -119,6 +120,10 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
             file.name, output, MODEL.sample_rate, strategy="loudness",
             loudness_headroom_db=16, loudness_compressor=True, add_suffix=False)
         waveform_video = gr.make_waveform(file.name)
+    global UNLOAD_MODEL
+    if UNLOAD_MODEL:
+        MODEL = None
+        torch.cuda.empty_cache()
     return waveform_video, seed
 
 
@@ -276,9 +281,12 @@ if __name__ == "__main__":
     parser.add_argument(
         '--share', action='store_true', help='Share the gradio UI'
     )
+    parser.add_argument(
+        '--unload_model', action='store_true', help='Unload the model after every generation to save GPU memory'
+    )
 
     args = parser.parse_args()
-
+    UNLOAD_MODEL = args.unload_model
     ui(
         username=args.username,
         password=args.password,
