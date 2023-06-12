@@ -9,6 +9,7 @@ LICENSE file in the root directory of this source tree.
 import random
 from tempfile import NamedTemporaryFile
 import argparse
+import time
 import torch
 import gradio as gr
 import os
@@ -47,6 +48,7 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
     if seed < 0:
         seed = random.randint(0, 0xffff_ffff_ffff)
     torch.manual_seed(seed)
+    predict.last_progress_update = time.monotonic()
     while duration > 0:
         if INTERRUPTED:
             break
@@ -72,7 +74,10 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
             duration=segment_duration,
         )
         def updateProgress(step: int, total: int):
-            progress((total_samples - duration * 50 - 3 + step, total_samples))
+            now = time.monotonic()
+            if now - predict.last_progress_update > 1:
+                progress((total_samples - duration * 50 - 3 + step, total_samples))
+                predict.last_progress_update = now
 
         if melody:
             sr, melody = melody[0], torch.from_numpy(melody[1]).to(MODEL.device).float().t().unsqueeze(0)
