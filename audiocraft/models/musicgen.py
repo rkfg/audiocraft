@@ -291,3 +291,8 @@ class MusicGen:
         with torch.no_grad():
             gen_audio = self.compression_model.decode(gen_tokens, None)
         return gen_audio
+
+    def to(self, device: str):
+        self.compression_model.to(device)
+        self.lm.to(device)
+        return self

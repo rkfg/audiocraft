@@ -17,9 +17,11 @@ from audiocraft.models import MusicGen
 from audiocraft.data.audio import audio_write
 
 MODEL = None
+MODELS = None
 IS_SHARED_SPACE = "musicgen/MusicGen" in os.environ.get('SPACE_ID', '')
 INTERRUPTED = False
 UNLOAD_MODEL = False
+MOVE_TO_CPU = False
 
 def interrupt():
     global INTERRUPTED
@@ -27,17 +29,35 @@ def interrupt():
     print('Interrupted!')
 
 def load_model(version):
+    global MODEL, MODELS
     print("Loading model", version)
-    return MusicGen.get_pretrained(version)
-
+    if MODELS is None:
+        return MusicGen.get_pretrained(version)
+    else:
+        t1 = time.monotonic()
+        if MODEL is not None:
+            MODEL.to('cpu') # move to cache
+            print("Previous model moved to CPU in %.2fs" % (time.monotonic() - t1))
+            t1 = time.monotonic()
+        if MODELS.get(version) is None:
+            print("Loading model %s from disk" % version)
+            result = MusicGen.get_pretrained(version)
+            MODELS[version] = result
+            print("Model loaded in %.2fs" % (time.monotonic() - t1))
+            return result
+        result = MODELS[version].to('cuda')
+        print("Cached model loaded in %.2fs" % (time.monotonic() - t1))
+        return result
 
 def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap=5, recondition=True, progress=gr.Progress()):
-    global MODEL
-    global INTERRUPTED
+    global MODEL, INTERRUPTED, UNLOAD_MODEL
     INTERRUPTED = False
     topk = int(topk)
     if MODEL is None or MODEL.name != model:
         MODEL = load_model(model)
+    else:
+        if MOVE_TO_CPU:
+            MODEL.to('cuda')
 
     if duration > MODEL.lm.cfg.dataset.segment_duration and melody is not None:
         raise gr.Error("Generating music longer than 30 seconds with melody conditioning is not yet supported!")
@@ -120,10 +140,12 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
             file.name, output, MODEL.sample_rate, strategy="loudness",
             loudness_headroom_db=16, loudness_compressor=True, add_suffix=False)
         waveform_video = gr.make_waveform(file.name)
-    global UNLOAD_MODEL
+    if MOVE_TO_CPU:
+        MODEL.to('cpu')
     if UNLOAD_MODEL:
         MODEL = None
-        torch.cuda.empty_cache()
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
     return waveform_video, seed
 
 
@@ -285,8 +307,19 @@ if __name__ == "__main__":
         '--unload_model', action='store_true', help='Unload the model after every generation to save GPU memory'
     )
 
+    parser.add_argument(
+        '--unload_to_cpu', action='store_true', help='Move the model to main RAM after every generation to save GPU memory but reload faster than after full unload (see above)'
+    )
+
+    parser.add_argument(
+        '--cache', action='store_true', help='Cache models in RAM to quickly switch between them'
+    )
+
     args = parser.parse_args()
     UNLOAD_MODEL = args.unload_model
+    MOVE_TO_CPU = args.unload_to_cpu
+    if args.cache:
+        MODELS = {}
     ui(
         username=args.username,
         password=args.password,
