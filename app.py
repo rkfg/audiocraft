@@ -185,7 +185,7 @@ def ui(**kwargs):
                     topk = gr.Number(label="Top-k", value=250, interactive=True)
                     topp = gr.Number(label="Top-p", value=0, interactive=True)
                     temperature = gr.Number(label="Temperature", value=1.0, interactive=True)
-                    cfg_coef = gr.Number(label="Classifier Free Guidance", value=3.0, interactive=True)
+                    cfg_coef = gr.Number(label="Classifier Free Guidance", value=5.0, interactive=True)
                 with gr.Row():
                     seed = gr.Number(label="Seed", value=-1, precision=0, interactive=True)
                     gr.Button('\U0001f3b2\ufe0f').style(full_width=False).click(fn=lambda: -1, outputs=[seed], queue=False)
