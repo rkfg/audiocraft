@@ -150,7 +150,7 @@ def predict(model, text, melody, duration, topk, topp, temperature, cfg_coef, se
 
 
 def ui(**kwargs):
-    with gr.Blocks() as interface:
+    with gr.Blocks(title='Audiocraft') as interface:
         gr.Markdown(
             """
             # MusicGen
