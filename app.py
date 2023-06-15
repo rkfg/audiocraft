@@ -19,7 +19,7 @@ import warnings
 import torch
 import gradio as gr
 
-from audiocraft.data.audio_utils import convert_audio
+from audiocraft.data.audio_utils import convert_audio, normalize_audio
 from audiocraft.data.audio import audio_write
 from audiocraft.models import MusicGen
 
@@ -88,7 +88,7 @@ def load_model(version='melody'):
         print("Cached model loaded in %.2fs" % (time.monotonic() - t1))
         MODEL = result
 
-def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
+def _do_predictions(texts, melodies, duration, prompt, progress=False, **gen_kwargs):
     global MODEL
     MODEL.set_generation_params(duration=duration, **gen_kwargs)
     print("new batch", len(texts), texts, [None if m is None else (m[0], m[1].shape) for m in melodies])
@@ -96,6 +96,14 @@ def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
     processed_melodies = []
     target_sr = 32000
     target_ac = 1
+    prompt_sr = 0
+    if prompt is not None:
+        prompt_sr, prompt = prompt[0], torch.from_numpy(prompt[1]).float().t() / 32768
+        if prompt.dim() == 1:
+            prompt = prompt[None]
+        prompt = normalize_audio(prompt, strategy="loudness", sample_rate=prompt_sr,
+                loudness_headroom_db=16, loudness_compressor=True)
+
     for melody in melodies:
         if melody is None:
             processed_melodies.append(None)
@@ -112,10 +120,15 @@ def _do_predictions(texts, melodies, duration, progress=False, **gen_kwargs):
             descriptions=texts,
             melody_wavs=processed_melodies,
             melody_sample_rate=target_sr,
+            prompt=prompt,
+            prompt_sample_rate=prompt_sr,
             progress=progress,
         )
     else:
-        outputs = MODEL.generate(texts, progress=progress)
+        if prompt is None:
+            outputs = MODEL.generate(texts, progress=progress)
+        else:
+            outputs = MODEL.generate_continuation(prompt, prompt_sr, texts, progress=progress)
 
     outputs = outputs.detach().cpu().float()
     out_files = []
@@ -144,7 +157,7 @@ def predict_batched(texts, melodies):
     return [res]
 
 
-def predict_full(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap, progress=gr.Progress()):
+def predict_full(model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap, prompt, progress=gr.Progress()):
     global INTERRUPTING
     INTERRUPTING = False
     if temperature < 0:
@@ -174,7 +187,7 @@ def predict_full(model, text, melody, duration, topk, topp, temperature, cfg_coe
     MODEL.set_custom_progress_callback(_progress)
 
     outs = _do_predictions(
-        [text], [melody], duration, progress=True,
+        [text], [melody], duration, prompt, progress=True,
         top_k=topk, top_p=topp, temperature=temperature, cfg_coef=cfg_coef, extend_stride=MODEL.max_duration-overlap)
     return outs[0], seed
 
@@ -193,6 +206,7 @@ def ui_full(launch_kwargs):
                 with gr.Row():
                     text = gr.Text(label="Input Text", interactive=True)
                     melody = gr.Audio(source="upload", type="numpy", label="Melody Condition (optional)", interactive=True)
+                    prompt = gr.Audio(source="upload", type="numpy", label="Continue this music (optional)", interactive=True)
                 with gr.Row():
                     submit = gr.Button("Generate", variant="primary")
                     # Adapted from https://github.com/rkfg/audiocraft/blob/long/app.py, MIT license.
@@ -217,7 +231,7 @@ def ui_full(launch_kwargs):
                 seed_used = gr.Number(label='Seed used', value=-1, interactive=False)
 
         reuse_seed.click(fn=lambda x: x, inputs=[seed_used], outputs=[seed], queue=False)
-        submit.click(predict_full, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap], outputs=[output, seed_used])
+        submit.click(predict_full, inputs=[model, text, melody, duration, topk, topp, temperature, cfg_coef, seed, overlap, prompt], outputs=[output, seed_used])
         gr.Examples(
             fn=predict_full,
             examples=[
