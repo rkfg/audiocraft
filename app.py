@@ -99,6 +99,10 @@ def _do_predictions(texts, melodies, duration, prompt, progress=False, **gen_kwa
     prompt_sr = 0
     if prompt is not None:
         prompt_sr, prompt = prompt[0], torch.from_numpy(prompt[1]).float().t() / 32768
+        if prompt.shape[-1] / prompt_sr > duration:
+            raise gr.Error('Duration should be longer than the music fragment to continue')
+        if prompt.shape[-1] / prompt_sr > MODEL.max_duration:
+            raise gr.Error(f'The music fragment to continue should be shorter than {MODEL.max_duration} seconds')
         if prompt.dim() == 1:
             prompt = prompt[None]
         prompt = normalize_audio(prompt, strategy="loudness", sample_rate=prompt_sr,
